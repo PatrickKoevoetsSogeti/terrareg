@@ -1,10 +1,4 @@
-# You can override the included template(s) by including variable overrides
-# SAST customization: https://docs.gitlab.com/ee/user/application_security/sast/#customizing-the-sast-settings
-# Secret Detection customization: https://docs.gitlab.com/ee/user/application_security/secret_detection/#customizing-settings
-# Dependency Scanning customization: https://docs.gitlab.com/ee/user/application_security/dependency_scanning/#customizing-the-dependency-scanning-settings
-# Container Scanning customization: https://docs.gitlab.com/ee/user/application_security/container_scanning/#customizing-the-container-scanning-settings
-# Note that environment variables can be set in several places
-# See https://docs.gitlab.com/ee/ci/variables/#cicd-variable-precedence
+
 image: python:3.10
 variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
@@ -15,18 +9,21 @@ cache:
   - ".cache/pip"
   - venv/
   - terraform-docs
-".before_script_python":
+
+.before_script_python:
   before_script:
   - python --version
   - pip install virtualenv
   - virtualenv venv
   - source venv/bin/activate
   - pip install -r requirements.txt
-".test_image":
+
+.test_image:
   image: terrareg-test-image:v${CI_COMMIT_SHORT_SHA}
+
 unit-integration-selenium-tests:
   stage: test
-  extends: ".test_image"
+  extends: .test_image
   script:
   - alembic upgrade head
   - http_proxy= HTTP_PROXY= coverage run -m pytest --verbose ./test
@@ -34,10 +31,13 @@ unit-integration-selenium-tests:
   - coverage xml
   artifacts:
     reports:
-      cobertura: coverage.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+
 mysql-integration-selenium-tests:
   stage: test
-  extends: ".test_image"
+  extends: .test_image
   services:
   - name: mariadb:10.8
     alias: mysql
@@ -51,16 +51,20 @@ mysql-integration-selenium-tests:
   - coverage xml
   artifacts:
     reports:
-      cobertura: coverage.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+
 build-wheel:
   stage: build
-  extends: ".before_script_python"
+  extends: .before_script_python
   script:
   - python setup.py bdist_wheel
   - pip install dist/*
   artifacts:
     paths:
     - dist/*.whl
+
 build-test-docker-image:
   stage: build
   image: docker:latest
@@ -70,6 +74,7 @@ build-test-docker-image:
   - docker build -f Dockerfile.tests -t terrareg-test-image:v${CI_COMMIT_SHORT_SHA}
     --build-arg http_proxy=$http_proxy --build-arg HTTP_PROXY=$http_proxy --build-arg
     https_proxy=$https_proxy --build-arg HTTPS_PROY=$https_proxy .
+
 release:
   stage: deploy
   image: semantic-release:latest
@@ -83,9 +88,14 @@ release:
   - semantic-release
   only:
   - main
-stages:
-- test
+
 sast:
   stage: test
+
+stages:
+- build
+- test
+- deploy
+
 include:
 - template: Security/SAST.gitlab-ci.yml
