@@ -5,3 +5,6 @@ data
 modules.db
 *.db
 bin/
+.vscode/*
+flask_session/*
+*:Zone.Identifier
