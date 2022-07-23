@@ -392,3 +392,49 @@ class Config:
             return False
 
         raise InvalidBooleanConfigurationError('Boolean config value not valid. Must be one of: true, yes, 1, false, no, 0')
+
+
+
+    @property
+    def EXTERNAL_AUTH(self):
+        """
+        Preform External Authentication.
+        """
+        return self.convert_boolean(os.environ.get('EXTERNAL_AUTH', 'False'))
+
+    @property
+    def AUTHORITY(self):
+        """
+        Preform External Authentication.
+        """
+        return os.environ.get('AUTHORITY', None)
+
+    @property
+    def CLIENT_ID(self):
+        """
+        Preform External Authentication.
+        """
+        return os.environ.get('CLIENT_ID', None)
+
+    @property
+    def CLIENT_SECRET(self):
+        """
+        Preform External Authentication.
+        """
+        return os.environ.get('CLIENT_SECRET', None)
+
+    # @property
+    # def SCOPE(self):
+    #     """
+    #     Git provider config.
+    #     """
+    #     return os.environ.get('SCOPE', '["User.ReadBasic.All"]')
+
+    SCOPE = ["User.ReadBasic.All"]
+
+    @property
+    def REDIRECT_PATH(self):
+        """
+        Git provider config.
+        """
+        return os.environ.get('REDIRECT_PATH', '/getAToken')

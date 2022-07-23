@@ -1,5 +1,6 @@
 
 import hmac
+from logging import config
 import os
 import re
 import datetime
@@ -11,9 +12,13 @@ from enum import Enum
 
 from flask import (
     Flask, request, render_template,
-    redirect, make_response, send_from_directory,
+    redirect, make_response, send_from_directory, url_for,
     session, g
 )
+
+from flask_session import Session as Sess #as oasession # https://pythonhosted.org/Flask-Session
+import msal
+
 from flask_restful import Resource, Api, reqparse, inputs, abort
 
 import terrareg.config
@@ -24,8 +29,8 @@ from terrareg.errors import (
 )
 from terrareg.models import (
     Example, ExampleFile, Namespace, Module, ModuleProvider,
-    ModuleVersion, ProviderLogo, Session, Submodule,
-    GitProvider
+    ModuleVersion, ProviderLogo, Submodule,
+    GitProvider, Session
 )
 from terrareg.module_search import ModuleSearch
 from terrareg.module_extractor import ApiUploadModuleExtractor, GitModuleExtractor
@@ -129,6 +134,14 @@ class Server(object):
             os.mkdir(os.path.join(terrareg.config.Config().DATA_DIRECTORY, 'modules'))
 
         self._app.config['UPLOAD_FOLDER'] = self._get_upload_directory()
+        self._app.jinja_env.globals.update(_build_auth_code_flow=_build_auth_code_flow)
+        from werkzeug.middleware.proxy_fix import ProxyFix
+        self._app.wsgi_app = ProxyFix(self._app.wsgi_app, x_proto=1, x_host=1)
+        self._app.config['SESSION_TYPE'] = 'filesystem'
+        self._app.config['SECRET_KEY'] = terrareg.config.Config().SECRET_KEY
+        sess = Sess()
+        sess.init_app(self._app)
+
 
         # Initialise database
         Database.get().initialise()
@@ -203,8 +216,17 @@ class Server(object):
             '/login'
         )(self._view_serve_login)
         self._app.route(
+            '/oalogin'
+        )(self._view_serve_oauth_login)
+        self._app.route(
+            '/getAToken'
+        )(self.authorized)
+        self._app.route(
             '/logout'
         )(self._logout)
+        self._app.route(
+            '/oalogout'
+        )(self._oalogout)
         self._app.route(
             '/create-module'
         )(self._view_serve_create_module)
@@ -465,8 +487,33 @@ class Server(object):
         ), 404
 
     def _view_serve_static_index(self):
-        """Serve static index"""
-        return self._render_template('index.html')
+        if terrareg.config.Config().EXTERNAL_AUTH == True :
+            if not session.get("user"):
+                return redirect(url_for("_view_serve_oauth_login"))
+            return render_template('index.html', version=msal.__version__)
+            #return render_template('index.html', user=session["user"], version=msal.__version__)
+        else:
+            """Serve static index"""
+            return self._render_template('index.html')
+
+    def _view_serve_oauth_login(self):
+        # Technically we could use empty list [] as scopes to do just sign in,
+        # here we choose to also collect end user consent upfront
+        session["flow"] = _build_auth_code_flow(scopes=terrareg.config.Config().SCOPE)
+        return render_template("oalogin.html", auth_url=session["flow"]["auth_uri"], version=msal.__version__)
+
+    def authorized(self):
+        try:
+            cache = _load_cache()
+            result = _build_msal_app(cache=cache).acquire_token_by_auth_code_flow(
+                session.get("flow", {}), request.args)
+            if "error" in result:
+                return render_template("auth_error.html", result=result)
+            session["user"] = result.get("id_token_claims")
+            _save_cache(cache)
+        except ValueError:  # Usually caused by CSRF
+            pass  # Simply ignore them
+        return redirect(url_for("_view_serve_static_index"))
 
     def _view_serve_login(self):
         """Serve static login page."""
@@ -483,6 +530,13 @@ class Server(object):
 
         session['is_admin_authenticated'] = False
         return redirect('/')
+
+
+    def _oalogout(self):
+        session.clear()  # Wipe out user and its token cache from session
+        return redirect(  # Also logout from your tenant's web session
+            terrareg.config.Config().AUTHORITY + "/oauth2/v2.0/logout" +
+            "?post_logout_redirect_uri=" + url_for("index", _external=True))
 
     def _view_serve_create_module(self):
         """Provide view to create module provider."""
@@ -599,6 +653,36 @@ class AuthenticationType(Enum):
     SESSION = 3
 
 
+
+def _load_cache():
+    cache = msal.SerializableTokenCache()
+    if session.get("token_cache"):
+        cache.deserialize(session["token_cache"])
+    return cache
+
+def _save_cache(cache):
+    if cache.has_state_changed:
+        session["token_cache"] = cache.serialize()
+
+def _build_msal_app(cache=None, authority=None):
+    return msal.ConfidentialClientApplication(
+        terrareg.config.Config().CLIENT_ID, authority=authority or terrareg.config.Config().AUTHORITY,
+        client_credential=terrareg.config.Config().CLIENT_SECRET, token_cache=cache)
+
+def _build_auth_code_flow(authority=None, scopes=None):
+    return _build_msal_app(authority=authority).initiate_auth_code_flow(
+        scopes or [],
+        redirect_uri=url_for("authorized", _external=True))
+
+def _get_token_from_cache(scope=None):
+    cache = _load_cache()  # This web app maintains one cache per session
+    cca = _build_msal_app(cache=cache)
+    accounts = cca.get_accounts()
+    if accounts:  # So all account(s) belong to the current signed-in user
+        result = cca.acquire_token_silent(scope, account=accounts[0])
+        _save_cache(cache)
+        return result
+
 def get_csrf_token():
     """Return current session CSRF token."""
     return session.get('csrf_token', '')
@@ -646,6 +730,11 @@ def check_admin_authentication():
             session.get('is_admin_authenticated', False)):
         authenticated = True
         g.authentication_type = AuthenticationType.SESSION
+    
+    if (terrareg.config.Config().EXTERNAL_AUTH and session['user']['roles']=='admin'):
+        authenticated = True
+        g.authentication_type = AuthenticationType.AUTHENTICATION_TOKEN
+
 
     return authenticated
 
