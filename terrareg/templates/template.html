@@ -38,7 +38,6 @@
               navbar_search_modules();
             }
           }
-
           async function setupPageLogin() {
             let loggedIn = await isLoggedIn(); 
             if (loggedIn) {
@@ -49,7 +48,6 @@
               $('#navbarCreateDropdown').css('display', 'flex');
             }
           }
-
           $(document).ready(() => {
             setupPageLogin();
           });
@@ -127,11 +125,11 @@
                 <div class="navbar-item">
                   <div class="field is-grouped">
                     <p class="control">
-                      <a id="navbar_login_link" class="button is-primary" href="/login">
-                      <span class="icon">
-                        <i id="navbar_login_icon" class="fa fa-sign-in"></i>
-                      </span>
-                      <span id="navbar_login_span">Login</span>
+                        <a id="navbar_login_link" class="button is-primary" href="/login">
+                          <span class="icon">
+                            <i id="navbar_login_icon" class="fa fa-sign-in"></i>
+                          </span>
+                        <span id="navbar_login_span">Login</span>
                     </a>
                     </p>
                   </div>
