@@ -139,6 +139,7 @@ class Server(object):
         self._app.wsgi_app = ProxyFix(self._app.wsgi_app, x_proto=1, x_host=1)
         self._app.config['SESSION_TYPE'] = 'filesystem'
         self._app.config['SECRET_KEY'] = terrareg.config.Config().SECRET_KEY
+        self._app.config['PERMANENT'] = False
         sess = Sess()
         sess.init_app(self._app)
 
@@ -515,15 +516,24 @@ class Server(object):
 
     def _logout(self):
         """Remove cookie and redirect."""
-        # Check if session exists in database and, if so,
-        # delete it
-        session_obj = Session.check_session(session_id=session.get('session_id', None))
-        if session_obj:
-            session_obj.delete()
-        session['session_id'] = None
+        if ( terrareg.config.Config().EXTERNAL_AUTH):
+            # Wipe out user and its token cache from session
+            # Also logout from your tenant's web session
+            session.clear()  # Wipe out user and its token cache from session
+            return redirect(  # Also logout from your tenant's web session
+                terrareg.config.Config().AUTHORITY + "/oauth2/v2.0/logout" +
+                "?post_logout_redirect_uri=" + url_for("_view_serve_static_index", _external=True))
 
-        session['is_admin_authenticated'] = False
-        return redirect('/')
+        else:
+            # Check if session exists in database and, if so,
+            # delete it
+            session_obj = Session.check_session(session_id=session.get('session_id', None))
+            if session_obj:
+                session_obj.delete()
+            session['session_id'] = None
+
+            session['is_admin_authenticated'] = False
+            return redirect('/')
 
 
     def _oalogout(self):
@@ -725,7 +735,7 @@ def check_admin_authentication():
         authenticated = True
         g.authentication_type = AuthenticationType.SESSION
     
-    if (terrareg.config.Config().EXTERNAL_AUTH and session['user']['roles']=='admin'):
+    if (terrareg.config.Config().EXTERNAL_AUTH and 'admin' in session['user']['roles']):
         authenticated = True
         g.authentication_type = AuthenticationType.AUTHENTICATION_TOKEN
 
